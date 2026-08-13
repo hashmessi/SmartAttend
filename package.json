@@ -1,0 +1,13 @@
+{
+  "name": "smartattend-root",
+  "version": "1.0.0",
+  "description": "SmartAttend Face Registration System Root Runner",
+  "main": "enrollment-pwa/server.js",
+  "scripts": {
+    "postinstall": "cd enrollment-pwa && npm install",
+    "start": "cd enrollment-pwa && node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

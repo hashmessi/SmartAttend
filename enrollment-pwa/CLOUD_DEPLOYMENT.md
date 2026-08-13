@@ -41,7 +41,9 @@ Render is a free cloud hosting service for Node.js backends.
 3. Connect your GitHub account and select your `smartattend-registration` repository.
 4. Configure the Web Service settings:
    - **Name**: `smartattend-registration`
-   - **Environment**: `Node`
+   - **Region**: Any (e.g. Oregon or Singapore)
+   - **Branch**: `main`
+   - **Root Directory**: `enrollment-pwa` (or leave empty with root package.json)
    - **Build Command**: `npm install`
    - **Start Command**: `node server.js`
    - **Instance Type**: **Free**
