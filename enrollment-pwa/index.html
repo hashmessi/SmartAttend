@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#f2f2f7" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="SmartAttend" />
+  <title>SmartAttend — Student Face Registration</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- App Shell Container (iOS Frame) -->
+  <div class="app-shell">
+
+    <!-- ── TOP NAVIGATION ── -->
+    <header class="topnav">
+      <div class="topnav__brand">
+        <div class="topnav__logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="8" r="4" stroke="#6366f1" stroke-width="2.2"/>
+            <path d="M4 20c0-4 3.58-7 8-7s8 3 8 7" stroke="#6366f1" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <span class="topnav__title">SmartAttend</span>
+          <span class="topnav__sub">Student Registration</span>
+        </div>
+      </div>
+      <div class="topnav__actions">
+        <button class="btn-staff-lock" id="btnAdminPortal" title="Staff Access">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <span id="adminLockText">Staff</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ══════════════════════ SCREEN: HOME / FORM ══════════════════════ -->
+    <main class="screen active" id="screenForm">
+      <div class="ios-card hero-card">
+        <div class="hero-icon">📸</div>
+        <h1 class="hero-title">Student Face Metrics</h1>
+        <p class="hero-subtitle">Enter your academic details below to begin face metric registration for attendance.</p>
+      </div>
+
+      <form class="ios-card form-card" id="studentForm" novalidate>
+        <div class="form-group">
+          <label class="form-label" for="inputName">Full Name <span class="req">*</span></label>
+          <input class="form-input" type="text" id="inputName" placeholder="e.g. Rahul Kumar" autocomplete="name" required />
+          <div class="form-error" id="errName"></div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="inputRegNo">Register Number <span class="req">*</span></label>
+          <input class="form-input mono" type="text" id="inputRegNo" placeholder="e.g. 22CSE101" autocomplete="off" required />
+          <div class="form-error" id="errRegNo"></div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="inputDept">Department <span class="req">*</span></label>
+            <select class="form-input" id="inputDept" required>
+              <option value="">Select</option>
+              <option value="CSE">CSE</option>
+              <option value="ECE">ECE</option>
+              <option value="EEE">EEE</option>
+              <option value="MECH">MECH</option>
+              <option value="CIVIL">CIVIL</option>
+              <option value="IT">IT</option>
+              <option value="AIDS">AIDS</option>
+              <option value="CSBS">CSBS</option>
+              <option value="MCT">MCT</option>
+              <option value="OTHER">Other</option>
+            </select>
+            <div class="form-error" id="errDept"></div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="inputSection">Section <span class="req">*</span></label>
+            <select class="form-input" id="inputSection" required>
+              <option value="">Select</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="D">D</option>
+            </select>
+            <div class="form-error" id="errSection"></div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="inputYear">Year <span class="req">*</span></label>
+            <select class="form-input" id="inputYear" required>
+              <option value="">Year</option>
+              <option value="1">1st Year</option>
+              <option value="2">2nd Year</option>
+              <option value="3">3rd Year</option>
+              <option value="4">4th Year</option>
+            </select>
+            <div class="form-error" id="errYear"></div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="inputSemester">Semester</label>
+            <select class="form-input" id="inputSemester">
+              <option value="">Sem</option>
+              <option value="1">Sem 1</option>
+              <option value="2">Sem 2</option>
+              <option value="3">Sem 3</option>
+              <option value="4">Sem 4</option>
+              <option value="5">Sem 5</option>
+              <option value="6">Sem 6</option>
+              <option value="7">Sem 7</option>
+              <option value="8">Sem 8</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="btn-ios-primary btn-full" type="submit" id="btnStartCapture">
+          Start Face Capture →
+        </button>
+      </form>
+
+      <div class="ios-card info-card">
+        <div class="info-item">
+          <span class="info-icon">🔒</span>
+          <span>Your biometric data is encrypted & stored securely in the institution database.</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- ══════════════════════ SCREEN: CAMERA ══════════════════════ -->
+    <section class="screen" id="screenCamera">
+      <div class="camera-top-bar">
+        <button class="btn-ios-back" id="btnBackFromCamera" title="Back">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+        <div class="camera-student-badge">
+          <span id="camStudentName">Student Name</span>
+          <span class="cam-sub" id="camStudentMeta">DEPT · REGNO</span>
+        </div>
+        <button class="btn-ios-icon" id="btnFlipCamera" title="Flip Camera">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 4v6h6"/><path d="M23 20v-6h-6"/>
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="camera-viewport-frame">
+        <video class="camera-video" id="cameraVideo" autoplay playsinline muted></video>
+        <canvas class="camera-canvas" id="cameraCanvas"></canvas>
+
+        <!-- Face Alignment Guide Overlay -->
+        <div class="face-guide-overlay">
+          <svg class="guide-svg" viewBox="0 0 300 400" fill="none">
+            <ellipse cx="150" cy="180" rx="85" ry="115" stroke="rgba(255,255,255,0.85)" stroke-width="3" stroke-dasharray="8 6"/>
+            <line x1="75" y1="145" x2="225" y2="145" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-dasharray="4 4"/>
+          </svg>
+        </div>
+
+        <!-- Pose Direction Badge -->
+        <div class="pose-step-pill" id="poseStepPill">
+          <span class="pose-step-num" id="poseStepBadge">1/4</span>
+          <span id="poseStepText">🎯 Look straight at camera</span>
+        </div>
+
+        <!-- Shutter Flash -->
+        <div class="shutter-flash" id="shutterFlash"></div>
+      </div>
+
+      <!-- Controls Card -->
+      <div class="ios-card camera-controls-card">
+        <div class="progress-bar-container">
+          <div class="progress-info">
+            <span>Metrics captured</span>
+            <span class="progress-num"><span id="photoCount">0</span> / 8</span>
+          </div>
+          <div class="ios-progress-wrap">
+            <div class="ios-progress-fill" id="progressBarFill" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <div class="capture-action-row">
+          <button class="btn-auto-burst" id="btnBurst" title="Auto capture">
+            ⚡ Auto 1s
+          </button>
+          
+          <button class="ios-shutter-btn" id="btnCapture" title="Take photo">
+            <div class="shutter-inner"></div>
+          </button>
+
+          <button class="btn-delete-last" id="btnDeleteLast" title="Undo last photo">
+            🗑️
+          </button>
+        </div>
+
+        <button class="btn-ios-primary btn-full" id="btnSubmitMetrics" disabled>
+          Submit Face Metrics (0/8)
+        </button>
+      </div>
+    </section>
+
+    <!-- ══════════════════════ SCREEN: SUCCESS / THANK YOU ══════════════════════ -->
+    <section class="screen" id="screenSuccess">
+      <div class="ios-card success-card">
+        <div class="success-checkmark">
+          <svg width="64" height="64" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="44" fill="#ecfdf5" stroke="#10b981" stroke-width="4"/>
+            <polyline points="30,52 45,67 72,34" fill="none" stroke="#10b981" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <h2 class="success-title">Registration Complete!</h2>
+        <p class="success-desc" id="successDesc">Thank you! Your face metrics have been successfully submitted to the department database.</p>
+
+        <div class="summary-box" id="summaryBox">
+          <div class="summary-row">
+            <span class="lbl">Student Name</span>
+            <span class="val" id="sumName">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="lbl">Register No</span>
+            <span class="val mono" id="sumRegNo">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="lbl">Department</span>
+            <span class="val" id="sumDept">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="lbl">Status</span>
+            <span class="val status-green">✓ Encrypted & Saved</span>
+          </div>
+        </div>
+
+        <div class="privacy-note">
+          🔒 Privacy Notice: Individual face photos are processed into secure mathematical vector embeddings and are not viewable by students.
+        </div>
+
+        <button class="btn-ios-primary btn-full" id="btnDoneNext">
+          Done — Register Another Student
+        </button>
+      </div>
+    </section>
+
+    <!-- ══════════════════════ SCREEN: ADMIN STUDENTS LIST ══════════════════════ -->
+    <section class="screen" id="screenStudents">
+      <div class="screen-top-bar">
+        <button class="btn-ios-back" id="btnBackFromStudents">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+        <h2 class="screen-title">Staff Admin Portal</h2>
+        <button class="btn-ios-action" id="btnExportFromList">Export ZIP</button>
+      </div>
+
+      <div class="ios-card search-card">
+        <input class="form-input search-input" type="search" id="searchInput" placeholder="Search by name or reg no…" />
+        <select class="form-input select-dept" id="filterDept">
+          <option value="">All Depts</option>
+          <option value="CSE">CSE</option>
+          <option value="ECE">ECE</option>
+          <option value="EEE">EEE</option>
+          <option value="MECH">MECH</option>
+          <option value="CIVIL">CIVIL</option>
+          <option value="IT">IT</option>
+          <option value="AIDS">AIDS</option>
+        </select>
+      </div>
+
+      <div class="students-container" id="studentsList"></div>
+      <div class="empty-state" id="studentsEmpty" style="display:none">
+        <div class="empty-icon">📂</div>
+        <div class="empty-title">No student datasets found</div>
+      </div>
+    </section>
+
+  </div><!-- /app-shell -->
+
+  <!-- Toast -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Admin PIN Modal -->
+  <div class="modal-backdrop" id="adminPinModal" style="display:none">
+    <div class="ios-modal">
+      <div class="modal-header">
+        <h3 class="modal-title">Staff Security Passcode</h3>
+        <button class="modal-close" id="btnClosePinModal">✕</button>
+      </div>
+      <form id="adminPinForm">
+        <div class="modal-body">
+          <p class="modal-desc">Enter staff passcode to access student datasets and export controls.</p>
+          <input class="form-input mono pin-input" type="password" id="inputAdminPin" placeholder="Enter Passcode" autocomplete="current-password" autofocus required />
+          <div class="form-error" id="errAdminPin"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-ios-secondary" type="button" id="btnCancelPin">Cancel</button>
+          <button class="btn-ios-primary" type="submit">Unlock</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Modal -->
+  <div class="modal-backdrop" id="deleteModal" style="display:none">
+    <div class="ios-modal">
+      <div class="modal-header">
+        <h3 class="modal-title">Delete Dataset?</h3>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc" id="deleteModalText">Delete this student dataset permanently?</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-ios-secondary" id="btnCancelDelete">Cancel</button>
+        <button class="btn-ios-danger" id="btnConfirmDelete">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

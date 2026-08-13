@@ -1,0 +1,28 @@
+{
+  "name": "SmartAttend Enrollment",
+  "short_name": "Enroll",
+  "description": "Student face enrollment studio for SmartAttend AI attendance system",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0b0f",
+  "theme_color": "#0f1117",
+  "lang": "en",
+  "categories": ["education", "utilities"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
+}

@@ -1,0 +1,21 @@
+{
+  "name": "enrollment-pwa",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "body-parser": "^2.3.0",
+    "cloudinary": "^2.10.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "jszip": "^3.10.1",
+    "sqlite3": "^6.0.1"
+  }
+}
