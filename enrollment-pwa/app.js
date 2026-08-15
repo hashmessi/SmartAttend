@@ -135,15 +135,34 @@ function validateForm() {
   });
 });
 
-// ── Hardware Face Detector (if available on Android/Chrome) ─────
-let nativeDetector = null;
-if (typeof window !== 'undefined' && 'FaceDetector' in window) {
-  try {
-    nativeDetector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 2 });
-  } catch (e) {
-    nativeDetector = null;
+// ═══════════════════════════════════════════════════════════════
+// Google MediaPipe AI Vision Face Detection Engine
+// ═══════════════════════════════════════════════════════════════
+let mediaPipeDetector = null;
+let isMediaPipeReady  = false;
+let isDetecting       = false;
+
+async function initMediaPipe() {
+  if (typeof window !== 'undefined' && window.FaceDetection) {
+    try {
+      mediaPipeDetector = new window.FaceDetection({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`,
+      });
+
+      mediaPipeDetector.setOptions({
+        model: 'short', // 'short' is ultra-fast for front/selfie cameras
+        minDetectionConfidence: 0.60,
+      });
+
+      mediaPipeDetector.onResults(onMediaPipeResults);
+      isMediaPipeReady = true;
+      console.log('🤖 Google MediaPipe Face Detection initialized.');
+    } catch (err) {
+      console.warn('MediaPipe initialization fallback:', err);
+    }
   }
 }
+initMediaPipe();
 
 // ── Calculate Visible Viewport Crop (matching CSS object-fit: cover)
 function getVideoCropRect(video) {
@@ -206,6 +225,10 @@ async function startCamera() {
       canvas.height = 960;
     }
 
+    if (!isMediaPipeReady) {
+      await initMediaPipe();
+    }
+
     startQualityLoop();
   } catch (err) {
     toast('Camera access denied.', 'error');
@@ -239,184 +262,221 @@ function startQualityLoop() {
   if (animFrameId) cancelAnimationFrame(animFrameId);
   const loop = async (timestamp) => {
     if (!cameraStream) return;
-    // Run analysis ~6× per second (every ~160ms)
-    if (timestamp - lastCheckTime > 160) {
-      lastCheckTime = timestamp;
-      await analyzeFaceFrame();
+    const video = document.getElementById('cameraVideo');
+    if (video && video.readyState >= 2 && !isDetecting) {
+      if (timestamp - lastCheckTime > 120) { // ~8 FPS detection loop
+        lastCheckTime = timestamp;
+        if (isMediaPipeReady && mediaPipeDetector) {
+          isDetecting = true;
+          try {
+            await mediaPipeDetector.send({ image: video });
+          } catch (e) {
+            console.warn('MediaPipe send error:', e);
+          } finally {
+            isDetecting = false;
+          }
+        } else {
+          // Native/Fallback detector while MediaPipe is loading
+          analyzeFallbackFrame();
+        }
+      }
     }
     animFrameId = requestAnimationFrame(loop);
   };
   animFrameId = requestAnimationFrame(loop);
 }
 
-// ── High-Precision Face Presence & Alignment Analysis ─────────
-// Multi-layer detection:
-// 1. Hardware FaceDetector API (instant, accurate bounding box on supported browsers)
-// 2. YCbCr Melanin Chromaticity + Eye-gradient fallback (rejects ceilings/walls/lights)
-async function analyzeFaceFrame() {
+// ── Google MediaPipe Face Detection Results Callback ──────────
+function onMediaPipeResults(results) {
+  const video = document.getElementById('cameraVideo');
+  if (!video || !video.videoWidth) return;
+
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const viewport = document.querySelector('.camera-viewport-frame');
+  const containerW = viewport?.clientWidth || 360;
+  const containerH = viewport?.clientHeight || 480;
+
+  if (!results.detections || results.detections.length === 0) {
+    faceMetrics = {
+      facePresent: false,
+      score: 0,
+      statusText: '👤 Align your face in the oval',
+      statusColor: '#ef4444',
+      poseOk: false
+    };
+    updateFaceStatusUI();
+    return;
+  }
+
+  if (results.detections.length > 1) {
+    faceMetrics = {
+      facePresent: false,
+      score: 0,
+      statusText: '⚠️ 1 person only in frame',
+      statusColor: '#ef4444',
+      poseOk: false
+    };
+    updateFaceStatusUI();
+    return;
+  }
+
+  const detection = results.detections[0];
+  const box = detection.boundingBox; // { xCenter, yCenter, width, height } normalized
+  const landmarks = detection.landmarks || [];
+
+  // Map normalized video coords to screen viewport using object-fit: cover scale
+  const scale = Math.max(containerW / vw, containerH / vh);
+  const renderedW = vw * scale;
+  const renderedH = vh * scale;
+  const offsetX = (containerW - renderedW) / 2;
+  const offsetY = (containerH - renderedH) / 2;
+
+  // Center position of face in screen coordinates
+  const screenFaceX = (box.xCenter * vw) * scale + offsetX;
+  const screenFaceY = (box.yCenter * vh) * scale + offsetY;
+  const screenFaceH = (box.height * vh) * scale;
+  const screenFaceW = (box.width * vw) * scale;
+
+  // Normalized relative to container (0.0 to 1.0)
+  const relX = screenFaceX / containerW;
+  const relY = screenFaceY / containerH;
+  const relH = screenFaceH / containerH;
+  const relW = screenFaceW / containerW;
+
+  // Center oval: (0.50, 0.46) with radii (0.30, 0.31)
+  const ovalDx = (relX - 0.50) / 0.30;
+  const ovalDy = (relY - 0.46) / 0.31;
+  const isInsideOval = (ovalDx * ovalDx + ovalDy * ovalDy) <= 1.0;
+  const isGoodSize = (relH >= 0.20 && relH <= 0.80);
+
+  // Landmark pose validation (Yaw angle estimation from eye & nose positions)
+  let yawOffset = 0;
+  if (landmarks.length >= 4) {
+    const rightEye = landmarks[0];
+    const leftEye = landmarks[1];
+    const nose = landmarks[2];
+    const eyeDist = Math.abs(leftEye.x - rightEye.x);
+    const eyeMidX = (rightEye.x + leftEye.x) / 2;
+    if (eyeDist > 0.01) {
+      yawOffset = (nose.x - eyeMidX) / eyeDist;
+    }
+  }
+
+  const currentCount = capturedPhotos.length;
+  let poseRequired = 'straight';
+  let posePrompt = '🎯 Look straight at camera';
+
+  if (currentCount < 2) {
+    poseRequired = 'straight';
+    posePrompt = '🎯 Look straight at camera';
+  } else if (currentCount < 4) {
+    poseRequired = 'left';
+    posePrompt = '👈 Turn head slightly left';
+  } else if (currentCount < 6) {
+    poseRequired = 'right';
+    posePrompt = '👉 Turn head slightly right';
+  } else {
+    poseRequired = 'tilt';
+    posePrompt = '📐 Slight head tilt or smile';
+  }
+
+  let isPoseSatisfied = true;
+  if (poseRequired === 'straight') {
+    isPoseSatisfied = Math.abs(yawOffset) < 0.22;
+  } else if (poseRequired === 'left') {
+    isPoseSatisfied = (facingMode === 'user') ? (yawOffset > 0.08) : (yawOffset < -0.08);
+  } else if (poseRequired === 'right') {
+    isPoseSatisfied = (facingMode === 'user') ? (yawOffset < -0.08) : (yawOffset > 0.08);
+  }
+
+  let statusText = '✅ Face detected — ready!';
+  let statusColor = '#10b981';
+  let facePresent = false;
+
+  if (!isInsideOval) {
+    statusText = '👤 Center your face in the oval';
+    statusColor = '#ef4444';
+  } else if (!isGoodSize && relH < 0.20) {
+    statusText = '📏 Move closer to camera';
+    statusColor = '#f59e0b';
+  } else if (!isGoodSize && relH > 0.80) {
+    statusText = '📏 Move a bit back';
+    statusColor = '#f59e0b';
+  } else if (!isPoseSatisfied) {
+    statusText = posePrompt;
+    statusColor = '#f59e0b';
+  } else {
+    facePresent = true;
+    statusText = '✅ Aligned! Hold still';
+    statusColor = '#10b981';
+  }
+
+  faceMetrics = {
+    facePresent,
+    score: facePresent ? 5 : 2,
+    statusText,
+    statusColor,
+    poseOk: isPoseSatisfied
+  };
+
+  updateFaceStatusUI();
+}
+
+// ── Fallback Analysis (used only if MediaPipe CDN is loading) ─
+function analyzeFallbackFrame() {
   const video = document.getElementById('cameraVideo');
   if (!video || !video.srcObject || video.readyState < 2) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
 
   const crop = getVideoCropRect(video);
-
-  // ── Layer 1: Native Hardware Face Detection (if supported) ──
-  if (nativeDetector) {
-    try {
-      const faces = await nativeDetector.detect(video);
-      if (faces && faces.length > 0) {
-        if (faces.length > 1) {
-          faceMetrics = {
-            facePresent: false,
-            score: 0,
-            statusText: '⚠️ Only 1 person allowed in frame',
-            statusColor: '#ef4444',
-          };
-          updateFaceStatusUI();
-          return;
-        }
-
-        const face = faces[0].boundingBox;
-        // Compute face center relative to visible cropped viewport
-        const faceCenterX = (face.x + face.width / 2 - crop.sx) / crop.sw;
-        const faceCenterY = (face.y + face.height / 2 - crop.sy) / crop.sh;
-        const faceRelWidth = face.width / crop.sw;
-
-        // Check if face is centered inside the guide oval
-        const isCentered = (faceCenterX >= 0.25 && faceCenterX <= 0.75) &&
-                           (faceCenterY >= 0.20 && faceCenterY <= 0.80);
-        const isGoodSize = faceRelWidth >= 0.20 && faceRelWidth <= 0.85;
-
-        if (isCentered && isGoodSize) {
-          faceMetrics = {
-            facePresent: true,
-            score: 4,
-            statusText: '✅ Face detected — ready!',
-            statusColor: '#10b981',
-          };
-          updateFaceStatusUI();
-          return;
-        } else if (!isGoodSize && faceRelWidth < 0.20) {
-          faceMetrics = {
-            facePresent: false,
-            score: 2,
-            statusText: '📏 Move closer to camera',
-            statusColor: '#f59e0b',
-          };
-          updateFaceStatusUI();
-          return;
-        } else {
-          faceMetrics = {
-            facePresent: false,
-            score: 1,
-            statusText: '👤 Center your face in the oval',
-            statusColor: '#ef4444',
-          };
-          updateFaceStatusUI();
-          return;
-        }
-      }
-    } catch (e) {
-      // Continue to Layer 2 fallback
-    }
-  }
-
-  // ── Layer 2: Advanced Chromaticity & Facial Contrast Fallback ─
-  // Sample only the visible viewport crop to 64x64
   sampleCtx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 64, 64);
   const frame = sampleCtx.getImageData(0, 0, 64, 64).data;
 
   let totalPx = 64 * 64;
   let rSum = 0, gSum = 0, bSum = 0, rSqSum = 0;
-  let skinCountCenter = 0;
-  let skinCountOuter  = 0;
-  let centerPxCount   = 0;
-  let outerPxCount    = 0;
-
-  // Eye-region vs Cheek-region contrast check
-  let upperLumaSum = 0, upperCount = 0;
-  let lowerLumaSum = 0, lowerCount = 0;
+  let skinCountCenter = 0, centerPxCount = 0;
 
   for (let y = 0; y < 64; y++) {
     for (let x = 0; x < 64; x++) {
       const idx = (y * 64 + x) * 4;
-      const r = frame[idx];
-      const g = frame[idx + 1];
-      const b = frame[idx + 2];
-
+      const r = frame[idx], g = frame[idx + 1], b = frame[idx + 2];
       rSum += r; gSum += g; bSum += b;
       rSqSum += r * r;
 
-      // YCbCr Color Space conversion
       const Y  = 0.299 * r + 0.587 * g + 0.114 * b;
       const Cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
       const Cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
 
-      // Strict human melanin skin test (rejects ceilings, lightbulbs, tan walls)
-      const isSkin = (Cb >= 77 && Cb <= 130) &&
-                     (Cr >= 133 && Cr <= 178) &&
-                     (Y >= 40 && Y <= 230) &&
-                     (r > g && r > b) &&
-                     (Math.abs(r - g) >= 12);
-
-      // Check if point is inside central oval (x: 22%-78%, y: 18%-82%)
-      const dx = (x - 32) / 18; // horizontal radius ~18
-      const dy = (y - 32) / 22; // vertical radius ~22
-      const insideOval = (dx * dx + dy * dy) <= 1.0;
-
-      if (insideOval) {
+      const isSkin = (Cb >= 77 && Cb <= 130) && (Cr >= 133 && Cr <= 178) && (Y >= 40 && Y <= 230) && (r > g && r > b);
+      const dx = (x - 32) / 18, dy = (y - 32) / 22;
+      if ((dx * dx + dy * dy) <= 1.0) {
         centerPxCount++;
         if (isSkin) skinCountCenter++;
-
-        if (y >= 18 && y <= 32) {
-          upperLumaSum += Y;
-          upperCount++;
-        } else if (y > 32 && y <= 50) {
-          lowerLumaSum += Y;
-          lowerCount++;
-        }
-      } else {
-        outerPxCount++;
-        if (isSkin) skinCountOuter++;
       }
     }
   }
 
   const brightness = (rSum + gSum + bSum) / (3 * totalPx);
   const variance   = (rSqSum / totalPx) - Math.pow(rSum / totalPx, 2);
-  const centerSkinRatio = skinCountCenter / (centerPxCount || 1);
-  const outerSkinRatio  = skinCountOuter / (outerPxCount || 1);
-
-  // Facial contrast (eyes/eyebrows create natural gradient vs cheeks)
-  const upperLuma = upperCount > 0 ? (upperLumaSum / upperCount) : 0;
-  const lowerLuma = lowerCount > 0 ? (lowerLumaSum / lowerCount) : 0;
-  const faceContrast = Math.abs(upperLuma - lowerLuma);
+  const skinRatio  = skinCountCenter / (centerPxCount || 1);
 
   const brightOk  = brightness >= 45 && brightness <= 235;
-  const blurOk    = variance > 120; // flat walls have very low variance
-  const skinOk    = centerSkinRatio >= 0.18; // strong skin density in oval
-  const notWall   = (centerSkinRatio > outerSkinRatio * 1.15) || (outerSkinRatio < 0.60);
+  const blurOk    = variance > 120;
+  const skinOk    = skinRatio >= 0.18;
 
-  let statusText, statusColor;
+  let statusText = '👤 Align face in oval';
+  let statusColor = '#ef4444';
   let facePresent = false;
 
   if (!brightOk && brightness < 45) {
     statusText  = '🌑 Too dark — face light source';
     statusColor = '#f59e0b';
-  } else if (!brightOk && brightness > 235) {
-    statusText  = '☀️ Too bright / overexposed';
-    statusColor = '#f59e0b';
   } else if (!blurOk) {
     statusText  = '🌀 Hold phone steady';
     statusColor = '#f59e0b';
-  } else if (!skinOk) {
-    statusText  = '👤 Align your face in the oval';
-    statusColor = '#ef4444';
-  } else if (!notWall) {
-    statusText  = '👤 Center face inside the guide';
-    statusColor = '#ef4444';
-  } else {
+  } else if (skinOk) {
     facePresent = true;
     statusText  = '✅ Face detected — ready!';
     statusColor = '#10b981';

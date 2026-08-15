@@ -285,16 +285,6 @@ select.form-input {
 .camera-video.mirror { transform: scaleX(-1); }
 .camera-canvas { display: none; }
 
-.face-guide-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-}
-.guide-svg { width: 70%; height: auto; }
-
 .pose-step-pill {
   position: absolute;
   top: 70px;

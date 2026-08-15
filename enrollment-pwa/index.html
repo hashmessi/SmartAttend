@@ -13,7 +13,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=4.0.0" />
+  <!-- Google MediaPipe High-Precision Face Detection (WASM/WebGL) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -341,6 +343,16 @@
     </div>
   </div>
 
-  <script src="app.js" type="module"></script>
+  <script>
+    // Flush stale caches on load
+    if ('caches' in window) {
+      caches.keys().then(keys => {
+        keys.forEach(k => {
+          if (k.includes('v1') || k.includes('v2')) caches.delete(k);
+        });
+      });
+    }
+  </script>
+  <script src="app.js?v=4.0.0" type="module"></script>
 </body>
 </html>
