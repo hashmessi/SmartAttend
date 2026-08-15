@@ -21,9 +21,19 @@ let burstTimer     = null;
 let isAdmin        = false;
 let adminPin       = '';
 
+// ── Face Detection State ───────────────────────────────────────
+// Stores the latest quality metrics from the analysis loop
+let faceMetrics = {
+  facePresent:  false,
+  score:        0,
+  statusText:   'Align face inside oval',
+  statusColor:  '#ef4444',   // red = not ready
+};
+
+// Shared off-screen canvas for pixel analysis (64×64 for speed)
 const sampleCanvas = document.createElement('canvas');
-sampleCanvas.width  = 32;
-sampleCanvas.height = 32;
+sampleCanvas.width  = 64;
+sampleCanvas.height = 64;
 const sampleCtx    = sampleCanvas.getContext('2d', { willReadFrequently: true });
 
 const POSE_STEPS = [
@@ -184,33 +194,150 @@ function startQualityLoop() {
   if (animFrameId) cancelAnimationFrame(animFrameId);
   const loop = (timestamp) => {
     if (!cameraStream) return;
-    if (timestamp - lastCheckTime > 1000) {
+    // Run analysis ~6× per second (every ~167ms) — fast enough for live feedback
+    if (timestamp - lastCheckTime > 167) {
       lastCheckTime = timestamp;
-      checkQuality();
+      analyzeFaceFrame();
     }
     animFrameId = requestAnimationFrame(loop);
   };
   animFrameId = requestAnimationFrame(loop);
 }
 
-function checkQuality() {
+// ── Pixel-level face presence analysis ────────────────────────
+//  Runs every ~167ms. Updates global `faceMetrics` and the UI overlay.
+//  Heuristics used (no ML, pure pixel math):
+//   1. Brightness — reject too dark / blown-out frames
+//   2. Skin-tone pixel ratio — detect human face-like hue/saturation in HSV
+//   3. Center-weight  — skin pixels must be concentrated in the oval zone
+//   4. Blur estimate  — pixel variance; very low variance = blurry / blank wall
+function analyzeFaceFrame() {
   const video = document.getElementById('cameraVideo');
   if (!video || !video.srcObject || video.readyState < 2) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
 
-  const sx = vw * 0.3, sy = vh * 0.2, sw = vw * 0.4, sh = vh * 0.6;
-  sampleCtx.drawImage(video, sx, sy, sw, sh, 0, 0, 32, 32);
+  // ── 1. Sample the full frame at 64×64 ─────────────────────
+  sampleCtx.drawImage(video, 0, 0, vw, vh, 0, 0, 64, 64);
+  const full = sampleCtx.getImageData(0, 0, 64, 64).data;
+
+  // ── 2. Sample the CENTRE oval zone at 64×64 ───────────────
+  //    Oval covers roughly the centre 40% width × 60% height of the frame
+  const cx = vw * 0.30, cy = vh * 0.15, cw = vw * 0.40, ch = vh * 0.70;
+  sampleCtx.drawImage(video, cx, cy, cw, ch, 0, 0, 64, 64);
+  const centre = sampleCtx.getImageData(0, 0, 64, 64).data;
+
+  let totalPx = 64 * 64;
+
+  // ── Compute per-channel sums & variance (blur proxy) ──────
+  let rSum = 0, gSum = 0, bSum = 0;
+  let rSqSum = 0;
+  for (let i = 0; i < full.length; i += 4) {
+    const r = full[i], g = full[i+1], b = full[i+2];
+    rSum   += r;  gSum   += g;  bSum   += b;
+    rSqSum += r * r;
+  }
+  const rMean      = rSum / totalPx;
+  const brightness = (rSum + gSum + bSum) / (3 * totalPx); // 0-255
+  const variance   = (rSqSum / totalPx) - (rMean * rMean); // blur proxy
+
+  // ── Count skin-tone pixels in centre zone ─────────────────
+  //  Skin heuristic (works for all skin tones, including dark skin):
+  //    R > 60, G > 40, B > 20
+  //    R > G and R > B
+  //    |R-G| > 10  (not grey/white/ceiling)
+  //    max(R,G,B) - min(R,G,B) > 15  (some chrominance — not blank wall)
+  let skinCount = 0;
+  for (let i = 0; i < centre.length; i += 4) {
+    const r = centre[i], g = centre[i+1], b = centre[i+2];
+    const maxC = Math.max(r, g, b);
+    const minC = Math.min(r, g, b);
+    if (
+      r > 60 && g > 40 && b > 20 &&
+      r > g  && r > b  &&
+      Math.abs(r - g) > 10 &&
+      (maxC - minC) > 15
+    ) {
+      skinCount++;
+    }
+  }
+  const skinRatio = skinCount / totalPx; // 0-1
+
+  // ── Scoring ───────────────────────────────────────────────
+  // We want: brightness 60-230, variance > 200, skinRatio > 0.12
+  const brightOk  = brightness >= 55 && brightness <= 235;
+  const blurOk    = variance   > 200;
+  const skinOk    = skinRatio  >= 0.12;
+
+  let score = 0;
+  if (brightOk) score += 1;
+  if (blurOk)   score += 1;
+  if (skinOk)   score += 2;   // skin is the strongest signal
+
+  const facePresent = score >= 3; // need brightness + blur + skin
+
+  // ── Build human-readable status ───────────────────────────
+  let statusText, statusColor;
+  if (!brightOk && brightness < 55) {
+    statusText  = '🌑 Too dark — find better lighting';
+    statusColor = '#f59e0b';
+  } else if (!brightOk && brightness > 235) {
+    statusText  = '☀️ Too bright / overexposed';
+    statusColor = '#f59e0b';
+  } else if (!blurOk) {
+    statusText  = '🌀 Hold camera steady';
+    statusColor = '#f59e0b';
+  } else if (!skinOk) {
+    statusText  = '👤 Align your face inside the oval';
+    statusColor = '#ef4444';
+  } else {
+    statusText  = '✅ Face detected — ready!';
+    statusColor = '#10b981';
+  }
+
+  faceMetrics = { facePresent, score, statusText, statusColor };
+  updateFaceStatusUI();
+}
+
+function updateFaceStatusUI() {
+  const el = document.getElementById('faceStatusLabel');
+  if (!el) return;
+  el.textContent   = faceMetrics.statusText;
+  el.style.color   = faceMetrics.statusColor;
+
+  // Also colour the oval guide border
+  const ellipse = document.querySelector('.guide-svg ellipse');
+  if (ellipse) {
+    ellipse.setAttribute(
+      'stroke',
+      faceMetrics.facePresent
+        ? 'rgba(16,185,129,0.95)'   // green when face detected
+        : 'rgba(255,255,255,0.75)'  // white otherwise
+    );
+  }
+}
+
+// ── Gate: returns true only when frame is acceptable to capture ─
+function validateFacePresent() {
+  if (!faceMetrics.facePresent) {
+    toast(faceMetrics.statusText, 'warn', 2000);
+    return false;
+  }
+  return true;
 }
 
 // ── PHOTO CAPTURE & SUBMISSION ────────────────────────────────
 document.getElementById('btnCapture')?.addEventListener('click', capturePhoto);
 
-function capturePhoto() {
+function capturePhoto(bypassCheck = false) {
   if (capturedPhotos.length >= MAX_PHOTOS) {
     stopBurstMode();
     return;
   }
+
+  // ── Face-presence gate ────────────────────────────────────
+  // Allow bypass=true only from burst's confirmed-green path
+  if (!bypassCheck && !validateFacePresent()) return;
 
   const video  = document.getElementById('cameraVideo');
   const canvas = document.getElementById('cameraCanvas');
@@ -256,15 +383,21 @@ function toggleBurstMode() {
     isBursting = true;
     const btn = document.getElementById('btnBurst');
     if (btn) btn.classList.add('active');
+    toast('⚡ Auto-capture: face must be in oval to shoot', 'info', 2500);
 
-    capturePhoto();
+    // Smart burst: only capture when face is present
     burstTimer = setInterval(() => {
       if (capturedPhotos.length >= MAX_PHOTOS) {
         stopBurstMode();
-      } else {
-        capturePhoto();
+        return;
       }
-    }, 1100);
+      // Re-run analysis right before each burst shot to get latest frame data
+      analyzeFaceFrame();
+      if (faceMetrics.facePresent) {
+        capturePhoto(true); // bypass redundant check — we just validated
+      }
+      // If face not present, silently skip this tick (no toast spam)
+    }, 1200);
   }
 }
 

@@ -529,3 +529,36 @@ select.form-input {
   box-shadow: 0 8px 24px rgba(0,0,0,0.2);
   white-space: nowrap;
 }
+
+/* ── Face Detection Status Label ── */
+.face-guide-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 14px;
+}
+.face-guide-overlay .guide-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.face-status-label {
+  position: relative;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 99px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #ef4444;
+  transition: color 0.25s ease;
+  white-space: nowrap;
+}
