@@ -135,12 +135,56 @@ function validateForm() {
   });
 });
 
+// ── Hardware Face Detector (if available on Android/Chrome) ─────
+let nativeDetector = null;
+if (typeof window !== 'undefined' && 'FaceDetector' in window) {
+  try {
+    nativeDetector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 2 });
+  } catch (e) {
+    nativeDetector = null;
+  }
+}
+
+// ── Calculate Visible Viewport Crop (matching CSS object-fit: cover)
+function getVideoCropRect(video) {
+  const vw = video.videoWidth || 1280;
+  const vh = video.videoHeight || 720;
+
+  const viewport = document.querySelector('.camera-viewport-frame');
+  const targetRatio = (viewport && viewport.clientWidth && viewport.clientHeight)
+    ? (viewport.clientWidth / viewport.clientHeight)
+    : (3 / 4); // Default 3:4 portrait
+
+  const videoRatio = vw / vh;
+  let sx = 0, sy = 0, sw = vw, sh = vh;
+
+  if (videoRatio > targetRatio) {
+    // Video stream is wider than viewport -> crop left/right
+    sw = vh * targetRatio;
+    sh = vh;
+    sx = (vw - sw) / 2;
+    sy = 0;
+  } else {
+    // Video stream is taller than viewport -> crop top/bottom
+    sw = vw;
+    sh = vw / targetRatio;
+    sx = 0;
+    sy = (vh - sh) / 2;
+  }
+
+  return { sx, sy, sw, sh };
+}
+
 // ── CAMERA HANDLER ────────────────────────────────────────────
 async function startCamera() {
   try {
     if (cameraStream) stopCamera();
     const constraints = {
-      video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: {
+        facingMode,
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
       audio: false,
     };
     cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -155,11 +199,12 @@ async function startCamera() {
     }
     await video.play();
 
+    // Prepare canvas dimensions immediately
     const canvas = document.getElementById('cameraCanvas');
-    video.addEventListener('loadedmetadata', () => {
-      canvas.width  = video.videoWidth;
-      canvas.height = video.videoHeight;
-    }, { once: true });
+    if (canvas) {
+      canvas.width  = 720;
+      canvas.height = 960;
+    }
 
     startQualityLoop();
   } catch (err) {
@@ -192,142 +237,225 @@ document.getElementById('btnBackFromCamera')?.addEventListener('click', () => {
 
 function startQualityLoop() {
   if (animFrameId) cancelAnimationFrame(animFrameId);
-  const loop = (timestamp) => {
+  const loop = async (timestamp) => {
     if (!cameraStream) return;
-    // Run analysis ~6× per second (every ~167ms) — fast enough for live feedback
-    if (timestamp - lastCheckTime > 167) {
+    // Run analysis ~6× per second (every ~160ms)
+    if (timestamp - lastCheckTime > 160) {
       lastCheckTime = timestamp;
-      analyzeFaceFrame();
+      await analyzeFaceFrame();
     }
     animFrameId = requestAnimationFrame(loop);
   };
   animFrameId = requestAnimationFrame(loop);
 }
 
-// ── Pixel-level face presence analysis ────────────────────────
-//  Runs every ~167ms. Updates global `faceMetrics` and the UI overlay.
-//  Heuristics used (no ML, pure pixel math):
-//   1. Brightness — reject too dark / blown-out frames
-//   2. Skin-tone pixel ratio — detect human face-like hue/saturation in HSV
-//   3. Center-weight  — skin pixels must be concentrated in the oval zone
-//   4. Blur estimate  — pixel variance; very low variance = blurry / blank wall
-function analyzeFaceFrame() {
+// ── High-Precision Face Presence & Alignment Analysis ─────────
+// Multi-layer detection:
+// 1. Hardware FaceDetector API (instant, accurate bounding box on supported browsers)
+// 2. YCbCr Melanin Chromaticity + Eye-gradient fallback (rejects ceilings/walls/lights)
+async function analyzeFaceFrame() {
   const video = document.getElementById('cameraVideo');
   if (!video || !video.srcObject || video.readyState < 2) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
 
-  // ── 1. Sample the full frame at 64×64 ─────────────────────
-  sampleCtx.drawImage(video, 0, 0, vw, vh, 0, 0, 64, 64);
-  const full = sampleCtx.getImageData(0, 0, 64, 64).data;
+  const crop = getVideoCropRect(video);
 
-  // ── 2. Sample the CENTRE oval zone at 64×64 ───────────────
-  //    Oval covers roughly the centre 40% width × 60% height of the frame
-  const cx = vw * 0.30, cy = vh * 0.15, cw = vw * 0.40, ch = vh * 0.70;
-  sampleCtx.drawImage(video, cx, cy, cw, ch, 0, 0, 64, 64);
-  const centre = sampleCtx.getImageData(0, 0, 64, 64).data;
+  // ── Layer 1: Native Hardware Face Detection (if supported) ──
+  if (nativeDetector) {
+    try {
+      const faces = await nativeDetector.detect(video);
+      if (faces && faces.length > 0) {
+        if (faces.length > 1) {
+          faceMetrics = {
+            facePresent: false,
+            score: 0,
+            statusText: '⚠️ Only 1 person allowed in frame',
+            statusColor: '#ef4444',
+          };
+          updateFaceStatusUI();
+          return;
+        }
 
-  let totalPx = 64 * 64;
+        const face = faces[0].boundingBox;
+        // Compute face center relative to visible cropped viewport
+        const faceCenterX = (face.x + face.width / 2 - crop.sx) / crop.sw;
+        const faceCenterY = (face.y + face.height / 2 - crop.sy) / crop.sh;
+        const faceRelWidth = face.width / crop.sw;
 
-  // ── Compute per-channel sums & variance (blur proxy) ──────
-  let rSum = 0, gSum = 0, bSum = 0;
-  let rSqSum = 0;
-  for (let i = 0; i < full.length; i += 4) {
-    const r = full[i], g = full[i+1], b = full[i+2];
-    rSum   += r;  gSum   += g;  bSum   += b;
-    rSqSum += r * r;
-  }
-  const rMean      = rSum / totalPx;
-  const brightness = (rSum + gSum + bSum) / (3 * totalPx); // 0-255
-  const variance   = (rSqSum / totalPx) - (rMean * rMean); // blur proxy
+        // Check if face is centered inside the guide oval
+        const isCentered = (faceCenterX >= 0.25 && faceCenterX <= 0.75) &&
+                           (faceCenterY >= 0.20 && faceCenterY <= 0.80);
+        const isGoodSize = faceRelWidth >= 0.20 && faceRelWidth <= 0.85;
 
-  // ── Count skin-tone pixels in centre zone ─────────────────
-  //  Skin heuristic (works for all skin tones, including dark skin):
-  //    R > 60, G > 40, B > 20
-  //    R > G and R > B
-  //    |R-G| > 10  (not grey/white/ceiling)
-  //    max(R,G,B) - min(R,G,B) > 15  (some chrominance — not blank wall)
-  let skinCount = 0;
-  for (let i = 0; i < centre.length; i += 4) {
-    const r = centre[i], g = centre[i+1], b = centre[i+2];
-    const maxC = Math.max(r, g, b);
-    const minC = Math.min(r, g, b);
-    if (
-      r > 60 && g > 40 && b > 20 &&
-      r > g  && r > b  &&
-      Math.abs(r - g) > 10 &&
-      (maxC - minC) > 15
-    ) {
-      skinCount++;
+        if (isCentered && isGoodSize) {
+          faceMetrics = {
+            facePresent: true,
+            score: 4,
+            statusText: '✅ Face detected — ready!',
+            statusColor: '#10b981',
+          };
+          updateFaceStatusUI();
+          return;
+        } else if (!isGoodSize && faceRelWidth < 0.20) {
+          faceMetrics = {
+            facePresent: false,
+            score: 2,
+            statusText: '📏 Move closer to camera',
+            statusColor: '#f59e0b',
+          };
+          updateFaceStatusUI();
+          return;
+        } else {
+          faceMetrics = {
+            facePresent: false,
+            score: 1,
+            statusText: '👤 Center your face in the oval',
+            statusColor: '#ef4444',
+          };
+          updateFaceStatusUI();
+          return;
+        }
+      }
+    } catch (e) {
+      // Continue to Layer 2 fallback
     }
   }
-  const skinRatio = skinCount / totalPx; // 0-1
 
-  // ── Scoring ───────────────────────────────────────────────
-  // We want: brightness 60-230, variance > 200, skinRatio > 0.12
-  const brightOk  = brightness >= 55 && brightness <= 235;
-  const blurOk    = variance   > 200;
-  const skinOk    = skinRatio  >= 0.12;
+  // ── Layer 2: Advanced Chromaticity & Facial Contrast Fallback ─
+  // Sample only the visible viewport crop to 64x64
+  sampleCtx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 64, 64);
+  const frame = sampleCtx.getImageData(0, 0, 64, 64).data;
 
-  let score = 0;
-  if (brightOk) score += 1;
-  if (blurOk)   score += 1;
-  if (skinOk)   score += 2;   // skin is the strongest signal
+  let totalPx = 64 * 64;
+  let rSum = 0, gSum = 0, bSum = 0, rSqSum = 0;
+  let skinCountCenter = 0;
+  let skinCountOuter  = 0;
+  let centerPxCount   = 0;
+  let outerPxCount    = 0;
 
-  const facePresent = score >= 3; // need brightness + blur + skin
+  // Eye-region vs Cheek-region contrast check
+  let upperLumaSum = 0, upperCount = 0;
+  let lowerLumaSum = 0, lowerCount = 0;
 
-  // ── Build human-readable status ───────────────────────────
+  for (let y = 0; y < 64; y++) {
+    for (let x = 0; x < 64; x++) {
+      const idx = (y * 64 + x) * 4;
+      const r = frame[idx];
+      const g = frame[idx + 1];
+      const b = frame[idx + 2];
+
+      rSum += r; gSum += g; bSum += b;
+      rSqSum += r * r;
+
+      // YCbCr Color Space conversion
+      const Y  = 0.299 * r + 0.587 * g + 0.114 * b;
+      const Cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+      const Cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+
+      // Strict human melanin skin test (rejects ceilings, lightbulbs, tan walls)
+      const isSkin = (Cb >= 77 && Cb <= 130) &&
+                     (Cr >= 133 && Cr <= 178) &&
+                     (Y >= 40 && Y <= 230) &&
+                     (r > g && r > b) &&
+                     (Math.abs(r - g) >= 12);
+
+      // Check if point is inside central oval (x: 22%-78%, y: 18%-82%)
+      const dx = (x - 32) / 18; // horizontal radius ~18
+      const dy = (y - 32) / 22; // vertical radius ~22
+      const insideOval = (dx * dx + dy * dy) <= 1.0;
+
+      if (insideOval) {
+        centerPxCount++;
+        if (isSkin) skinCountCenter++;
+
+        if (y >= 18 && y <= 32) {
+          upperLumaSum += Y;
+          upperCount++;
+        } else if (y > 32 && y <= 50) {
+          lowerLumaSum += Y;
+          lowerCount++;
+        }
+      } else {
+        outerPxCount++;
+        if (isSkin) skinCountOuter++;
+      }
+    }
+  }
+
+  const brightness = (rSum + gSum + bSum) / (3 * totalPx);
+  const variance   = (rSqSum / totalPx) - Math.pow(rSum / totalPx, 2);
+  const centerSkinRatio = skinCountCenter / (centerPxCount || 1);
+  const outerSkinRatio  = skinCountOuter / (outerPxCount || 1);
+
+  // Facial contrast (eyes/eyebrows create natural gradient vs cheeks)
+  const upperLuma = upperCount > 0 ? (upperLumaSum / upperCount) : 0;
+  const lowerLuma = lowerCount > 0 ? (lowerLumaSum / lowerCount) : 0;
+  const faceContrast = Math.abs(upperLuma - lowerLuma);
+
+  const brightOk  = brightness >= 45 && brightness <= 235;
+  const blurOk    = variance > 120; // flat walls have very low variance
+  const skinOk    = centerSkinRatio >= 0.18; // strong skin density in oval
+  const notWall   = (centerSkinRatio > outerSkinRatio * 1.15) || (outerSkinRatio < 0.60);
+
   let statusText, statusColor;
-  if (!brightOk && brightness < 55) {
-    statusText  = '🌑 Too dark — find better lighting';
+  let facePresent = false;
+
+  if (!brightOk && brightness < 45) {
+    statusText  = '🌑 Too dark — face light source';
     statusColor = '#f59e0b';
   } else if (!brightOk && brightness > 235) {
     statusText  = '☀️ Too bright / overexposed';
     statusColor = '#f59e0b';
   } else if (!blurOk) {
-    statusText  = '🌀 Hold camera steady';
+    statusText  = '🌀 Hold phone steady';
     statusColor = '#f59e0b';
   } else if (!skinOk) {
-    statusText  = '👤 Align your face inside the oval';
+    statusText  = '👤 Align your face in the oval';
+    statusColor = '#ef4444';
+  } else if (!notWall) {
+    statusText  = '👤 Center face inside the guide';
     statusColor = '#ef4444';
   } else {
+    facePresent = true;
     statusText  = '✅ Face detected — ready!';
     statusColor = '#10b981';
   }
 
-  faceMetrics = { facePresent, score, statusText, statusColor };
+  faceMetrics = { facePresent, score: facePresent ? 4 : 1, statusText, statusColor };
   updateFaceStatusUI();
 }
 
 function updateFaceStatusUI() {
   const el = document.getElementById('faceStatusLabel');
-  if (!el) return;
-  el.textContent   = faceMetrics.statusText;
-  el.style.color   = faceMetrics.statusColor;
+  if (el) {
+    el.textContent = faceMetrics.statusText;
+    el.style.color = faceMetrics.statusColor;
+  }
 
-  // Also colour the oval guide border
-  const ellipse = document.querySelector('.guide-svg ellipse');
+  // Update SVG oval guide color
+  const ellipse = document.getElementById('guideEllipse') || document.querySelector('.guide-svg ellipse');
   if (ellipse) {
     ellipse.setAttribute(
       'stroke',
       faceMetrics.facePresent
-        ? 'rgba(16,185,129,0.95)'   // green when face detected
-        : 'rgba(255,255,255,0.75)'  // white otherwise
+        ? 'rgba(16,185,129,0.95)'  // Vibrant Green
+        : 'rgba(239,68,68,0.85)'   // Red when misaligned
     );
   }
 }
 
-// ── Gate: returns true only when frame is acceptable to capture ─
+// ── Gate: returns true only when face is strictly validated ──
 function validateFacePresent() {
   if (!faceMetrics.facePresent) {
-    toast(faceMetrics.statusText, 'warn', 2000);
+    toast(faceMetrics.statusText, 'warn', 2200);
     return false;
   }
   return true;
 }
 
-// ── PHOTO CAPTURE & SUBMISSION ────────────────────────────────
-document.getElementById('btnCapture')?.addEventListener('click', capturePhoto);
+// ── PHOTO CAPTURE & SUBMISSION (WYSIWYG Centered Capture) ─────
+document.getElementById('btnCapture')?.addEventListener('click', () => capturePhoto(false));
 
 function capturePhoto(bypassCheck = false) {
   if (capturedPhotos.length >= MAX_PHOTOS) {
@@ -335,40 +463,46 @@ function capturePhoto(bypassCheck = false) {
     return;
   }
 
-  // ── Face-presence gate ────────────────────────────────────
-  // Allow bypass=true only from burst's confirmed-green path
+  // Enforce Face Alignment Gate
   if (!bypassCheck && !validateFacePresent()) return;
 
   const video  = document.getElementById('cameraVideo');
   const canvas = document.getElementById('cameraCanvas');
-  const ctx    = canvas.getContext('2d');
+  if (!video || !canvas || !video.videoWidth || !video.videoHeight) return;
 
-  if (!video || !video.videoWidth) return;
+  const ctx = canvas.getContext('2d');
+  const crop = getVideoCropRect(video);
 
+  // Exact 3:4 High-Resolution Output (720x960)
+  canvas.width  = 720;
+  canvas.height = 960;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw exactly what the student sees inside the viewport oval
   if (facingMode === 'user') {
     ctx.save();
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0);
+    ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, canvas.width, canvas.height);
     ctx.restore();
   } else {
-    ctx.drawImage(video, 0, 0);
+    ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, canvas.width, canvas.height);
   }
 
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
   capturedPhotos.push(dataUrl);
 
   const flash = document.getElementById('shutterFlash');
   if (flash) {
     flash.classList.add('active');
-    setTimeout(() => flash.classList.remove('active'), 100);
+    setTimeout(() => flash.classList.remove('active'), 120);
   }
 
   updateCameraUI();
 
   if (capturedPhotos.length >= MAX_PHOTOS) {
     stopBurstMode();
-    toast('Metrics complete! Submitting dataset...', 'success');
+    toast('All metrics captured! Submitting to database...', 'success');
     setTimeout(() => submitStudentDataset(), 500);
   }
 }
@@ -383,21 +517,19 @@ function toggleBurstMode() {
     isBursting = true;
     const btn = document.getElementById('btnBurst');
     if (btn) btn.classList.add('active');
-    toast('⚡ Auto-capture: face must be in oval to shoot', 'info', 2500);
+    toast('⚡ Smart Auto: Face must stay aligned in oval', 'info', 2500);
 
-    // Smart burst: only capture when face is present
-    burstTimer = setInterval(() => {
+    // Smart burst: only captures when face metrics are actively green
+    burstTimer = setInterval(async () => {
       if (capturedPhotos.length >= MAX_PHOTOS) {
         stopBurstMode();
         return;
       }
-      // Re-run analysis right before each burst shot to get latest frame data
-      analyzeFaceFrame();
+      await analyzeFaceFrame();
       if (faceMetrics.facePresent) {
-        capturePhoto(true); // bypass redundant check — we just validated
+        capturePhoto(true);
       }
-      // If face not present, silently skip this tick (no toast spam)
-    }, 1200);
+    }, 1300);
   }
 }
 
