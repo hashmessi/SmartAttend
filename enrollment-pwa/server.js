@@ -236,7 +236,7 @@ app.get('/api/admin/export', verifyAdmin, async (req, res) => {
 
     // Bundle student photos to zip (parallel download if cloud, disk read if local)
     for (const student of db) {
-      const zipSubFolder = datasetFolder.folder(student.folderName);
+      const zipSubFolder = datasetFolder.folder(student.dept).folder(student.section).folder(student.regNo);
 
       if (hasCloudinary && student.photos && student.photos.length) {
         const downloadPromises = student.photos.map(async (url, idx) => {

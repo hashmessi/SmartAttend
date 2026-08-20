@@ -549,6 +549,19 @@ function capturePhoto(bypassCheck = false) {
     ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, canvas.width, canvas.height);
   }
 
+  // Draw Registration Number Watermark
+  ctx.save();
+  ctx.font = 'bold 42px "SF Pro Display", Inter, sans-serif';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetX = 2;
+  ctx.shadowOffsetY = 2;
+  ctx.fillText(currentForm.regNo || 'Unknown', canvas.width - 24, canvas.height - 24);
+  ctx.restore();
+
   const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
   capturedPhotos.push(dataUrl);
 
